@@ -13,12 +13,16 @@ Outcomes (printed as the last line, WATCHDOG_RESULT: <name>):
   healthy          serve answered 200; nothing to do
   route_down       neither Libero nor moto answered: the VM's tunnel
                    route is suspect, NOT the node; no FCM sent
-  cooldown_skip    node down but a wake was sent < 20 min ago
+  cooldown_skip    node down but a wake was successfully sent < 20 min
+                   ago (a failed send does NOT start the cooldown, so
+                   the next cycle retries; a token_stale outcome DOES,
+                   because it would fail identically every cycle)
   sent_recovered   FCM sent and health returned within ~90 s
   sent_unverified  FCM sent (HTTP 200) but health not back in ~90 s
   token_stale      FCM returned UNREGISTERED: the stored device token
                    was superseded; a fresh token must be captured
-  send_failed      the send itself failed (see log)
+  send_failed      the send itself failed; the FULL send_wake output
+                   (including any traceback) is in the log
 """
 import json
 import os
@@ -119,17 +123,31 @@ def main() -> int:
         print("WATCHDOG_RESULT: cooldown_skip")
         return 0
 
-    state["last_send_epoch"] = now
-    save_state(state)
     code, out = send_wake()
-    log(f"send_wake rc={code} out={out.strip()[:200]!r}")
+    # Log the FULL output. The previous [:200] truncation cut the
+    # 2026-11-14 06:30 traceback before its root line, which made that
+    # send_failed undiagnosable from the log alone.
+    log(f"send_wake rc={code} out={out.strip()!r}")
 
     if "UNREGISTERED" in out:
+        # A stale token fails identically on every retry, so this
+        # outcome DOES start the cooldown (otherwise the fresh-token
+        # request would repeat every cycle).
+        state["last_send_epoch"] = time.time()
+        save_state(state)
         print("WATCHDOG_RESULT: token_stale")
         return 0
     if code != 0:
+        # A failed send woke nothing, so it must NOT start the
+        # cooldown: the next cycle retries instead of waiting 20 min
+        # (Moriya's fix request, 2026-11-14, after the 06:30 failure
+        # was masked by the cooldown it had consumed).
         print("WATCHDOG_RESULT: send_failed")
         return 0
+
+    # Only a successful send starts the cooldown.
+    state["last_send_epoch"] = time.time()
+    save_state(state)
 
     for _ in range(6):
         time.sleep(15)
