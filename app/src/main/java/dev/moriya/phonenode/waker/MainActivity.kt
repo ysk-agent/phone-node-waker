@@ -51,11 +51,11 @@ class MainActivity : Activity() {
         layout.addView(Button(this).apply {
             text = "Wake phone-node now (local test)"
             setOnClickListener {
-                val ok = WakerService.wakeNode(this@MainActivity)
+                val result = WakerService.wakeNode(this@MainActivity)
                 Toast.makeText(
                     this@MainActivity,
-                    if (ok) "NodeService start requested" else "Start failed",
-                    Toast.LENGTH_SHORT
+                    "Wake result: $result",
+                    Toast.LENGTH_LONG
                 ).show()
             }
         })

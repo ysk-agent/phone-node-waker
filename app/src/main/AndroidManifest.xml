@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Android 11+ package visibility: without this, the explicit
+         component intent for NodeService resolves to null in this
+         app ("Unable to start service ... not found" in logcat) and
+         the start silently does nothing. Found on the Libero trial,
+         2026-11-14: shell (am) could start the service, app callers
+         could not, until this declaration was added. -->
+    <queries>
+        <package android:name="dev.moriya.phonenode" />
+    </queries>
+
     <application
         android:label="Phone Node Waker"
         android:theme="@android:style/Theme.Material.NoActionBar">

@@ -35,8 +35,16 @@ class WakerService : FirebaseMessagingService() {
         const val PREFS = "waker-state"
         const val KEY_TOKEN = "fcm_token"
 
-        /** Identical to the helper app's resurrection call. */
-        fun wakeNode(context: Context): Boolean {
+        /**
+         * The same resurrection call the helper app makes — with one
+         * correction: startForegroundService does NOT throw when the
+         * target cannot be resolved (e.g. package-visibility
+         * filtering); it returns null and ActivityManager logs
+         * "Unable to start service ... not found". The helper ignored
+         * the return value, so its failures were silent. Report the
+         * outcome as a string so the UI can show what really happened.
+         */
+        fun wakeNode(context: Context): String {
             val intent = Intent().apply {
                 component = ComponentName(
                     "dev.moriya.phonenode",
@@ -44,12 +52,17 @@ class WakerService : FirebaseMessagingService() {
                 )
             }
             return try {
-                context.startForegroundService(intent)
-                Log.i(TAG, "NodeService start requested")
-                true
+                val started = context.startForegroundService(intent)
+                if (started != null) {
+                    Log.i(TAG, "NodeService start requested: $started")
+                    "started"
+                } else {
+                    Log.w(TAG, "NodeService start returned null (not found)")
+                    "not found (start returned null)"
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "NodeService start failed: $e")
-                false
+                "failed: $e"
             }
         }
     }
