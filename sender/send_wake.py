@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["httpx", "cryptography"]
+# dependencies = ["cryptography"]
 # ///
 """Send a high-priority FCM data message {action: wake} to a phone-node
 waker app, using the FCM HTTP v1 API with a service-account key.
@@ -12,14 +12,31 @@ Usage:
 
 The service-account JSON is a credential: keep it out of git and chat.
 The device token is shown in the waker app's UI on the phone.
+
+Transport note (learned the hard way, 2026-11-14): the HTTP calls go
+through curl, not httpx. From the Muse VM, httpx crashed on the
+bracketed IPv6 entries in NO_PROXY and, with those removed, stalled
+indefinitely through the egress proxy, while curl works reliably.
+Credentials travel in a mode-600 curl config file, never on the
+command line.
+
+Token discipline: FCM registration tokens ROTATE (on reinstall,
+data clear, and sometimes spontaneously while a device settles).
+FCM answers UNREGISTERED for a superseded token, which looks
+exactly like a broken setup. Always send to the freshest token —
+the value the waker's Copy button puts on the clipboard (written by
+onNewToken) — and if a send returns UNREGISTERED, fetch the token
+again before suspecting anything else.
 """
 import argparse
 import base64
 import json
+import os
+import subprocess
 import sys
+import tempfile
 import time
 
-import httpx
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -49,18 +66,47 @@ def build_jwt(sa: dict) -> str:
     return f"{signing_input}.{b64url(signature)}"
 
 
+def http_post(url: str, *, form: dict | None = None, json_body: dict | None = None,
+              bearer: str | None = None) -> tuple[int, str]:
+    """POST via curl with a hard 25s cap. Returns (status, body)."""
+    cfg_lines = []
+    if bearer is not None:
+        cfg_lines.append(f'header = "Authorization: Bearer {bearer}"')
+    extra: list[str] = []
+    if json_body is not None:
+        cfg_lines.append('header = "Content-Type: application/json"')
+        extra += ["-d", json.dumps(json_body)]
+    if form is not None:
+        for k, v in form.items():
+            extra += ["--data-urlencode", f"{k}={v}"]
+    fd, cfg_path = tempfile.mkstemp(prefix="fcm-curl-")
+    try:
+        with os.fdopen(fd, "w") as f:
+            os.chmod(cfg_path, 0o600)
+            f.write("\n".join(cfg_lines) + "\n")
+        out = subprocess.run(
+            ["curl", "-s", "-m", "25", "-K", cfg_path, "-X", "POST", url,
+             "-w", "\n%{http_code}"] + extra,
+            capture_output=True, text=True, timeout=30,
+        )
+    finally:
+        os.unlink(cfg_path)
+    body, _, code = out.stdout.rpartition("\n")
+    return int(code or 0), body
+
+
 def get_access_token(sa: dict) -> str:
     jwt = build_jwt(sa)
-    resp = httpx.post(
+    status, body = http_post(
         TOKEN_URL,
-        data={
+        form={
             "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "assertion": jwt,
         },
-        timeout=15,
     )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
+    if status != 200:
+        raise RuntimeError(f"token endpoint HTTP {status}: {body[:200]}")
+    return json.loads(body)["access_token"]
 
 
 def build_payload(token: str) -> dict:
@@ -95,15 +141,10 @@ def main() -> int:
         return 0
 
     access_token = get_access_token(sa)
-    resp = httpx.post(
-        url,
-        json=payload,
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=15,
-    )
-    print(f"HTTP {resp.status_code}")
-    print(resp.text)
-    return 0 if resp.status_code == 200 else 1
+    status, body = http_post(url, json_body=payload, bearer=access_token)
+    print(f"HTTP {status}")
+    print(body)
+    return 0 if status == 200 else 1
 
 
 if __name__ == "__main__":
