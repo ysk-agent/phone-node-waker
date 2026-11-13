@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1038082951517",
+    "project_id": "nodewaker",
+    "storage_bucket": "nodewaker.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1038082951517:android:3a18f75a41f929133040b4",
+        "android_client_info": {
+          "package_name": "dev.moriya.phonenode.waker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDwQpTW9fYn_BefnCUoVuPTgPHudKum1wY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

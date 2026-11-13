@@ -1,6 +1,8 @@
 package dev.moriya.phonenode.waker
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
@@ -32,6 +34,20 @@ class MainActivity : Activity() {
             text = "token: (loading)"
         }
         layout.addView(tokenView)
+        layout.addView(Button(this).apply {
+            text = "Copy token"
+            setOnClickListener {
+                val prefs = getSharedPreferences(WakerService.PREFS, MODE_PRIVATE)
+                val token = prefs.getString(WakerService.KEY_TOKEN, null)
+                if (token != null) {
+                    val clipboard = getSystemService(ClipboardManager::class.java)
+                    clipboard.setPrimaryClip(ClipData.newPlainText("waker token", token))
+                    Toast.makeText(this@MainActivity, "Token copied", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this@MainActivity, "No token yet", Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
         layout.addView(Button(this).apply {
             text = "Wake phone-node now (local test)"
             setOnClickListener {
