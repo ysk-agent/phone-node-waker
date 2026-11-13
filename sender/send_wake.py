@@ -20,6 +20,15 @@ indefinitely through the egress proxy, while curl works reliably.
 Credentials travel in a mode-600 curl config file, never on the
 command line.
 
+"Reliably" is relative: the OAuth token endpoint intermittently
+returns NO response at all (HTTP 0) from this VM — failures at
+06:30/06:42 JST on 2026-11-14, success at 06:44 with the same code
+and credentials — so http_post retries once on a transport failure
+and, if it still fails, raises TransportError carrying curl's return
+code and stderr from both attempts. The original code discarded
+exactly those two values, which is why the 06:30 failure could only
+be reported as an unexplained "HTTP 0".
+
 Token discipline: FCM registration tokens ROTATE (on reinstall,
 data clear, and sometimes spontaneously while a device settles).
 FCM answers UNREGISTERED for a superseded token, which looks
@@ -66,9 +75,37 @@ def build_jwt(sa: dict) -> str:
     return f"{signing_input}.{b64url(signature)}"
 
 
+class TransportError(RuntimeError):
+    """curl obtained no HTTP response at all (status 0). The message
+    carries curl's return code and stderr — the only evidence that
+    distinguishes a timeout from a connection reset, a proxy refusal,
+    or a TLS failure."""
+
+
+def _curl_once(url: str, cfg_path: str, extra: list[str]) -> tuple[int, str, int, str]:
+    """One curl POST attempt. Returns (status, body, curl_rc, stderr);
+    status is 0 when no HTTP response was received."""
+    try:
+        out = subprocess.run(
+            # -sS: silent progress, but curl's own error text still
+            # goes to stderr (plain -s would swallow it, leaving the
+            # TransportError diagnostics half-blind).
+            ["curl", "-sS", "-m", "25", "-K", cfg_path, "-X", "POST", url,
+             "-w", "\n%{http_code}"] + extra,
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return 0, "", -1, "subprocess timeout (30s cap)"
+    body, _, code = out.stdout.rpartition("\n")
+    return int(code or 0), body, out.returncode, out.stderr.strip()
+
+
 def http_post(url: str, *, form: dict | None = None, json_body: dict | None = None,
               bearer: str | None = None) -> tuple[int, str]:
-    """POST via curl with a hard 25s cap. Returns (status, body)."""
+    """POST via curl with a hard 25s cap. Returns (status, body) for
+    any real HTTP response, including 4xx/5xx. On a transport failure
+    (status 0) retries once after 3 s, then raises TransportError with
+    curl's diagnostics from both attempts."""
     cfg_lines = []
     if bearer is not None:
         cfg_lines.append(f'header = "Authorization: Bearer {bearer}"')
@@ -84,15 +121,17 @@ def http_post(url: str, *, form: dict | None = None, json_body: dict | None = No
         with os.fdopen(fd, "w") as f:
             os.chmod(cfg_path, 0o600)
             f.write("\n".join(cfg_lines) + "\n")
-        out = subprocess.run(
-            ["curl", "-s", "-m", "25", "-K", cfg_path, "-X", "POST", url,
-             "-w", "\n%{http_code}"] + extra,
-            capture_output=True, text=True, timeout=30,
-        )
+        diags: list[str] = []
+        for attempt in (1, 2):
+            status, body, rc, err = _curl_once(url, cfg_path, extra)
+            if status != 0:
+                return status, body
+            diags.append(f"attempt {attempt}: curl rc={rc} stderr={err[:200]!r}")
+            if attempt == 1:
+                time.sleep(3)
+        raise TransportError(f"no HTTP response from {url}: " + "; ".join(diags))
     finally:
         os.unlink(cfg_path)
-    body, _, code = out.stdout.rpartition("\n")
-    return int(code or 0), body
 
 
 def get_access_token(sa: dict) -> str:
