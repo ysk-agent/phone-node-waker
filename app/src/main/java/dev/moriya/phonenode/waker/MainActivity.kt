@@ -33,6 +33,15 @@ class MainActivity : Activity() {
             textSize = 13f
             text = "token: (loading)"
         }
+        // Show the installed build's version on screen so a handover
+        // can be verified at a glance (which build is actually
+        // installed, not just which file was downloaded).
+        val versionView = TextView(this).apply {
+            textSize = 13f
+            val info = packageManager.getPackageInfo(packageName, 0)
+            text = "version ${info.versionName} (code ${info.longVersionCode})"
+        }
+        layout.addView(versionView)
         layout.addView(tokenView)
         layout.addView(Button(this).apply {
             text = "Copy token"
